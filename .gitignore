@@ -6,3 +6,7 @@ Thumbs.db
 
 .env
 .env.local
+
+!/.vscode/settings.json
+!/.vscode/extensions.json
+!/.vscode/launch.json
