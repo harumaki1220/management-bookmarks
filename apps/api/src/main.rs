@@ -5,27 +5,31 @@ use axum::{
     routing::{get, post},
 };
 use dotenvy::dotenv;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use std::env;
 use std::net::SocketAddr;
 
-// フロントエンドから送られてくるデータの形
 #[derive(Deserialize)]
 struct CreateBookmark {
     url: String,
     title: String,
 }
 
-// POST /bookmarks を受け取る関数
+#[derive(Serialize)]
+struct Bookmark {
+    id: String,
+    url: String,
+    title: String,
+    fake_title: Option<String>,
+    // 日付は一旦後回し
+}
+
 async fn create_bookmark(
     State(pool): State<SqlitePool>,
     Json(payload): Json<CreateBookmark>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    // UUIDを生成
     let id = uuid::Uuid::new_v4().to_string();
-
-    // SQLを実行して保存
     let result = sqlx::query!(
         r#"
         INSERT INTO bookmarks (id, url, title)
@@ -38,7 +42,6 @@ async fn create_bookmark(
     .execute(&pool)
     .await;
 
-    // 結果に応じてレスポンスを返す
     match result {
         Ok(_) => Ok((
             StatusCode::CREATED,
@@ -46,12 +49,30 @@ async fn create_bookmark(
         )),
         Err(e) => {
             tracing::error!("Failed to create bookmark: {:?}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create bookmark: {}", e),
-            ))
+            Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
+}
+
+async fn get_bookmarks(
+    State(pool): State<SqlitePool>,
+) -> Result<Json<Vec<Bookmark>>, (StatusCode, String)> {
+    let bookmarks = sqlx::query_as!(
+        Bookmark,
+        r#"
+        SELECT id, url, title, fake_title
+        FROM bookmarks
+        ORDER BY created_at DESC
+        "#
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch bookmarks: {:?}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
+
+    Ok(Json(bookmarks))
 }
 
 #[tokio::main]
@@ -59,25 +80,22 @@ async fn main() {
     dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env file");
-
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = SqlitePoolOptions::new()
-        .max_connections(5)
         .connect(&database_url)
         .await
         .expect("Failed to connect to database");
 
     println!("✅ Database connection successful!");
 
-    // ルーティング設定
     let app = Router::new()
         .route("/", get(|| async { "Hello, Stealth Bookmarks API!" }))
         .route("/bookmarks", post(create_bookmark))
+        .route("/bookmarks", get(get_bookmarks))
         .with_state(pool);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
     println!("🚀 Server listening on http://{}", addr);
-
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
