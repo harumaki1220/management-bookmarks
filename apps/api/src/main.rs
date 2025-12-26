@@ -1,34 +1,80 @@
-use axum::{Router, routing::get};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+};
 use dotenvy::dotenv;
-use sqlx::sqlite::SqlitePoolOptions;
+use serde::Deserialize;
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use std::env;
 use std::net::SocketAddr;
 
+// フロントエンドから送られてくるデータの形
+#[derive(Deserialize)]
+struct CreateBookmark {
+    url: String,
+    title: String,
+}
+
+// POST /bookmarks を受け取る関数
+async fn create_bookmark(
+    State(pool): State<SqlitePool>,
+    Json(payload): Json<CreateBookmark>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    // UUIDを生成
+    let id = uuid::Uuid::new_v4().to_string();
+
+    // SQLを実行して保存
+    let result = sqlx::query!(
+        r#"
+        INSERT INTO bookmarks (id, url, title)
+        VALUES ($1, $2, $3)
+        "#,
+        id,
+        payload.url,
+        payload.title
+    )
+    .execute(&pool)
+    .await;
+
+    // 結果に応じてレスポンスを返す
+    match result {
+        Ok(_) => Ok((
+            StatusCode::CREATED,
+            "Bookmark created successfully".to_string(),
+        )),
+        Err(e) => {
+            tracing::error!("Failed to create bookmark: {:?}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create bookmark: {}", e),
+            ))
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
-    // 1. .envファイルを読み込む
     dotenv().ok();
-
-    // 2. ログ設定（エラーが見やすくなる）
     tracing_subscriber::fmt::init();
 
-    // 3. データベースに接続する
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env file");
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(5) // 同時接続数
+        .max_connections(5)
         .connect(&database_url)
         .await
         .expect("Failed to connect to database");
 
     println!("✅ Database connection successful!");
 
-    // 4. ルーティング設定（"/" にアクセスしたら文字を返すだけ）
+    // ルーティング設定
     let app = Router::new()
         .route("/", get(|| async { "Hello, Stealth Bookmarks API!" }))
-        .with_state(pool); // DB接続をアプリ全体で共有
+        .route("/bookmarks", post(create_bookmark))
+        .with_state(pool);
 
-    // 5. サーバー起動設定 (ポート3001番で待機)
     let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
     println!("🚀 Server listening on http://{}", addr);
 
