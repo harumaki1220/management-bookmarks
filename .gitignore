@@ -1,12 +1,12 @@
 node_modules/
 
-.vscode/
+.vscode/*
 .DS_Store
 Thumbs.db
 
 .env
 .env.local
 
-!/.vscode/settings.json
-!/.vscode/extensions.json
-!/.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
